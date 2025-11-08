@@ -1,6 +1,6 @@
 import pandas as pd
-from sklearn.model_selection import train_test_split, GridSearchCV # <-- Importar GridSearchCV
-from sklearn.preprocessing import StandardScaler, OneHotEncoder, FunctionTransformer
+from sklearn.model_selection import train_test_split, GridSearchCV 
+from sklearn.preprocessing import StandardScaler, OneHotEncoder, FunctionTransformer 
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.linear_model import LogisticRegression
@@ -9,13 +9,36 @@ from sklearn.metrics import classification_report, accuracy_score, confusion_mat
 from sklearn.utils.class_weight import compute_sample_weight 
 import warnings
 import numpy as np
+import joblib 
+import json   
+from pathlib import Path 
 
 # Ignorar warnings de convergência
 warnings.filterwarnings('ignore', category=FutureWarning)
 warnings.filterwarnings('ignore', category=UserWarning)
 
 # ---
-# 1. Carregar e Processar Todos os Dados
+# 0. FUNÇÃO HELPER (MOVEMOS ELA PARA CÁ)
+# ---
+def to_string(X_input):
+    """Converte a entrada (que pode ser um DataFrame ou ndarray) para string."""
+    # O FunctionTransformer pode passar um ndarray, então é melhor
+    # convertê-lo para DataFrame para garantir o .astype(str)
+    if isinstance(X_input, np.ndarray):
+        X_df = pd.DataFrame(X_input)
+    else:
+        X_df = X_input
+    return X_df.astype(str)
+
+# ---
+# 1. Definir Caminhos
+# ---
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+MODELS_PATH = PROJECT_ROOT / "models"
+MODELS_PATH.mkdir(exist_ok=True) # Garantir que a pasta exista
+
+# ---
+# 2. Carregar e Processar Todos os Dados
 # ---
 from data_loader import load_data
 from preprocessing import create_target_variable, clean_data
@@ -42,7 +65,7 @@ def get_final_data():
     return df_modelo
 
 # ---
-# 2. Definir Pipeline de Pré-processamento (Issue #8)
+# 3. Definir Pipeline de Pré-processamento (Issue #8)
 # ---
 def create_preprocessor(X: pd.DataFrame) -> ColumnTransformer:
     """
@@ -64,11 +87,9 @@ def create_preprocessor(X: pd.DataFrame) -> ColumnTransformer:
         ('scaler', StandardScaler())
     ])
     
-    def to_string(X):
-        return X.astype(str)
-
+    # *** CORREÇÃO AQUI: Usamos a função to_string do topo do script ***
     categorical_transformer = Pipeline(steps=[
-        ('tostring', FunctionTransformer(to_string)), 
+        ('tostring', FunctionTransformer(to_string, validate=False)), 
         ('onehot', OneHotEncoder(handle_unknown='ignore', sparse_output=False, dtype=int))
     ])
 
@@ -85,7 +106,7 @@ def create_preprocessor(X: pd.DataFrame) -> ColumnTransformer:
     return preprocessor
 
 # ---
-# 3. Treinar Modelos (Issues #9 e #11)
+# 4. Treinar Modelos (Issues #9 e #11)
 # ---
 def train_baseline_model(preprocessor: ColumnTransformer, X_train: pd.DataFrame, y_train: pd.Series):
     """
@@ -115,60 +136,51 @@ def tune_advanced_model(preprocessor: ColumnTransformer, X_train: pd.DataFrame, 
     print("\nℹ️ Otimizando modelo Avançado (XGBoost Ponderado com GridSearchCV) (Issue #11)...")
     print("⚠️ Isso pode demorar alguns minutos...")
     
-    # O XGBoost precisa que os alvos (y) sejam numéricos (0, 1, 2)
     target_map = {'Empate': 0, 'Vitoria_Mandante': 1, 'Vitoria_Visitante': 2}
     y_train_mapped = y_train.map(target_map)
     
-    # Calcular pesos para o XGBoost
     sample_weights = compute_sample_weight(
         class_weight='balanced',
         y=y_train_mapped
     )
     
-    # 1. Criar o Pipeline (igual antes)
     xgb_pipeline = Pipeline(steps=[
         ('preprocessor', preprocessor),
         ('classifier', XGBClassifier(
             objective='multi:softmax', 
             num_class=3,             
             random_state=42,
-            eval_metric='mlogloss' # Métrica de avaliação interna
+            eval_metric='mlogloss' 
         ))
     ])
     
-    # 2. Definir a Grade de Parâmetros para testar
-    # (O prefixo 'classifier__' diz ao pipeline para passar
-    #  o parâmetro para o passo 'classifier')
+    # Usando os parâmetros exatos que você encontrou como os melhores
+    # (Não precisamos re-treinar o grid completo, vamos direto para o melhor)
+    # Vamos recriar a grade para garantir que o script seja completo
     param_grid = {
-        'classifier__n_estimators': [100, 200, 300], # Número de árvores
-        'classifier__max_depth': [3, 5, 7],      # Profundidade das árvores
-        'classifier__learning_rate': [0.1, 0.05]   # Taxa de aprendizado
+        'classifier__learning_rate': [0.05], 
+        'classifier__max_depth': [7], 
+        'classifier__n_estimators': [200]
     }
     
-    # 3. Configurar o GridSearchCV
-    # Usamos 'f1_weighted' como 'scoring' pois estamos desbalanceados
     grid_search = GridSearchCV(
         estimator=xgb_pipeline,
         param_grid=param_grid,
-        scoring='f1_weighted', # Métrica de otimização
-        cv=3,                  # 3-fold cross-validation
-        n_jobs=-1,             # Usar todos os processadores
-        verbose=1              # Mostrar progresso
+        scoring='f1_weighted', 
+        cv=3,                  
+        n_jobs=-1,             
+        verbose=1              
     )
     
-    # 4. Criar o dicionário de fit_params
-    # (Para passar os sample_weights para o XGBoost DENTRO do gridsearch)
     fit_params = {
         'classifier__sample_weight': sample_weights
     }
     
-    # 5. Executar a Otimização
     grid_search.fit(X_train, y_train_mapped, **fit_params)
     
     print("✅ Otimização (GridSearch) concluída.")
     print(f"Melhores parâmetros encontrados: {grid_search.best_params_}")
     
-    # Retorna o MELHOR modelo encontrado
     return grid_search.best_estimator_, target_map
 
 
@@ -205,8 +217,6 @@ if __name__ == "__main__":
         y_pred_baseline = baseline_model.predict(X_test)
         accuracy_baseline = accuracy_score(y_test, y_pred_baseline)
         print(f"\nAcurácia (Baseline Ponderado): {accuracy_baseline * 100:.2f} %")
-        print("\nRelatório de Classificação (Baseline Ponderado):")
-        print(classification_report(y_test, y_pred_baseline))
 
         # 6. Otimizar e Avaliar Modelo Avançado (Issue #11)
         best_advanced_model, target_map = tune_advanced_model(preprocessor, X_train, y_train)
@@ -227,4 +237,20 @@ if __name__ == "__main__":
         print("\n--- Comparação de Modelos Ponderados ---")
         print(f"Acurácia Baseline (Logistic): {accuracy_baseline * 100:.2f} %")
         print(f"Acurácia Avançado (XGBoost Otimizado):  {accuracy_advanced * 100:.2f} %")
-        print(f"Melhoria: {(accuracy_advanced - accuracy_baseline) * 100:.2f} pontos percentuais")
+        
+        # ------------------------------------------------------------------
+        # --- ETAPA 6: SALVAR O MODELO (Issue #12) ---
+        # ------------------------------------------------------------------
+        print("\nℹ️ Serializando o melhor modelo (Issue #12)...")
+        
+        # 1. Salvar o pipeline completo (pré-processador + classificador)
+        pipeline_path = MODELS_PATH / "brasileirao_xgb_pipeline.joblib"
+        joblib.dump(best_advanced_model, pipeline_path)
+        
+        # 2. Salvar o mapeamento de classes (para a API saber {0: 'Empate', ...})
+        map_path = MODELS_PATH / "target_map.json"
+        with open(map_path, 'w', encoding='utf-8') as f:
+            json.dump(target_map, f, ensure_ascii=False, indent=4)
+            
+        print(f"✅ Pipeline salvo em: {pipeline_path}")
+        print(f"✅ Mapeamento de alvo salvo em: {map_path}")
