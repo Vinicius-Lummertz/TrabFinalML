@@ -1,0 +1,30 @@
+# ----
+# Núcleo de Data Science e Manipulação
+# ----
+pandas       # Para carregar e manipular os dados (CSVs)
+numpy        # Suporte numérico, dependência de muitas libs de ML
+scikit-learn # Para pré-processamento, modelos (Baseline) e métricas
+
+# ----
+# Modelagem Avançada (Etapa 5)
+# ----
+xgboost      # Algoritmo avançado (RandomForest já está no scikit-learn)
+
+# ----
+# Análise Exploratória (EDA - Etapa 4)
+# ----
+matplotlib   # Para gráficos básicos
+seaborn      # Para gráficos estatísticos mais avançados (heatmaps, etc)
+
+# ----
+# Ambiente de Desenvolvimento (Entregável)
+# ----
+jupyter      # Para criar o notebook .ipynb
+notebook     # Dependência para o jupyter
+
+# ----
+# Deploy (EtAPA 6 - Render Web Service)
+# ----
+fastapi      # Para criar a API REST
+uvicorn      # Servidor para rodar o FastAPI
+joblib       # Para salvar e carregar seu modelo/pipeline (.pkl / .joblib)
