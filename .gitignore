@@ -26,7 +26,6 @@ dist/
 # Dados, Modelos e Notebooks
 # (Não envie dados brutos ou modelos treinados, que são grandes)
 /data/
-/models/
 *.pkl
 *.joblib
 *.h5

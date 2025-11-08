@@ -28,3 +28,4 @@ notebook     # Dependência para o jupyter
 fastapi      # Para criar a API REST
 uvicorn      # Servidor para rodar o FastAPI
 joblib       # Para salvar e carregar seu modelo/pipeline (.pkl / .joblib)
+gunicorn
