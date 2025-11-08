@@ -13,22 +13,19 @@ import joblib
 import json   
 from pathlib import Path 
 
+# --- IMPORTAÇÃO CORRIGIDA ---
+# Prefer package import, but fallback to top-level `utils` so joblib unpickler (which may
+# reference `utils.to_string`) can find the symbol when loading artifacts.
+try:
+    from src.utils import to_string
+except Exception:
+    # When the saved model references `utils.to_string`, the unpickler will import `utils`.
+    # Provide a fallback to the top-level module if available.
+    from utils import to_string  # type: ignore
+
 # Ignorar warnings de convergência
 warnings.filterwarnings('ignore', category=FutureWarning)
 warnings.filterwarnings('ignore', category=UserWarning)
-
-# ---
-# 0. FUNÇÃO HELPER (MOVEMOS ELA PARA CÁ)
-# ---
-def to_string(X_input):
-    """Converte a entrada (que pode ser um DataFrame ou ndarray) para string."""
-    # O FunctionTransformer pode passar um ndarray, então é melhor
-    # convertê-lo para DataFrame para garantir o .astype(str)
-    if isinstance(X_input, np.ndarray):
-        X_df = pd.DataFrame(X_input)
-    else:
-        X_df = X_input
-    return X_df.astype(str)
 
 # ---
 # 1. Definir Caminhos
@@ -87,7 +84,7 @@ def create_preprocessor(X: pd.DataFrame) -> ColumnTransformer:
         ('scaler', StandardScaler())
     ])
     
-    # *** CORREÇÃO AQUI: Usamos a função to_string do topo do script ***
+    # *** CORREÇÃO AQUI: Usamos a função to_string importada ***
     categorical_transformer = Pipeline(steps=[
         ('tostring', FunctionTransformer(to_string, validate=False)), 
         ('onehot', OneHotEncoder(handle_unknown='ignore', sparse_output=False, dtype=int))
@@ -154,9 +151,7 @@ def tune_advanced_model(preprocessor: ColumnTransformer, X_train: pd.DataFrame, 
         ))
     ])
     
-    # Usando os parâmetros exatos que você encontrou como os melhores
-    # (Não precisamos re-treinar o grid completo, vamos direto para o melhor)
-    # Vamos recriar a grade para garantir que o script seja completo
+    # Usando os parâmetros exatos que você encontrou (para ser mais rápido)
     param_grid = {
         'classifier__learning_rate': [0.05], 
         'classifier__max_depth': [7], 
