@@ -1,13 +1,12 @@
 import pandas as pd
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, GridSearchCV # <-- Importar GridSearchCV
 from sklearn.preprocessing import StandardScaler, OneHotEncoder, FunctionTransformer
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.linear_model import LogisticRegression
 from xgboost import XGBClassifier 
 from sklearn.metrics import classification_report, accuracy_score, confusion_matrix
-# --- IMPORTAÇÃO ADICIONADA ---
-from sklearn.utils.class_weight import compute_sample_weight # Para ponderar o XGBoost
+from sklearn.utils.class_weight import compute_sample_weight 
 import warnings
 import numpy as np
 
@@ -86,7 +85,7 @@ def create_preprocessor(X: pd.DataFrame) -> ColumnTransformer:
     return preprocessor
 
 # ---
-# 3. Treinar Modelos (Issues #9 e #10 com Ponderação)
+# 3. Treinar Modelos (Issues #9 e #11)
 # ---
 def train_baseline_model(preprocessor: ColumnTransformer, X_train: pd.DataFrame, y_train: pd.Series):
     """
@@ -99,7 +98,7 @@ def train_baseline_model(preprocessor: ColumnTransformer, X_train: pd.DataFrame,
         ('classifier', LogisticRegression(
             max_iter=1000, 
             random_state=42,
-            class_weight='balanced' # <-- CORREÇÃO: Lidar com desbalanceamento
+            class_weight='balanced' 
         ))
     ])
     
@@ -108,43 +107,69 @@ def train_baseline_model(preprocessor: ColumnTransformer, X_train: pd.DataFrame,
     print("✅ Modelo Baseline Ponderado treinado.")
     return model_pipeline
 
-def train_advanced_model(preprocessor: ColumnTransformer, X_train: pd.DataFrame, y_train: pd.Series):
+def tune_advanced_model(preprocessor: ColumnTransformer, X_train: pd.DataFrame, y_train: pd.Series):
     """
-    Cria e treina o modelo avançado (XGBoost) com ponderação de classe.
-    (Issue #10)
+    Otimiza (TUNE) o modelo avançado (XGBoost) com GridSearchCV e ponderação.
+    (Issue #11)
     """
-    print("\nℹ️ Treinando modelo Avançado (XGBoost Ponderado) (Issue #10)...")
+    print("\nℹ️ Otimizando modelo Avançado (XGBoost Ponderado com GridSearchCV) (Issue #11)...")
+    print("⚠️ Isso pode demorar alguns minutos...")
     
     # O XGBoost precisa que os alvos (y) sejam numéricos (0, 1, 2)
     target_map = {'Empate': 0, 'Vitoria_Mandante': 1, 'Vitoria_Visitante': 2}
     y_train_mapped = y_train.map(target_map)
     
-    # --- CORREÇÃO: Calcular pesos para o XGBoost ---
-    # Isso dá mais peso para 'Empate' e 'Vitoria_Visitante'
+    # Calcular pesos para o XGBoost
     sample_weights = compute_sample_weight(
         class_weight='balanced',
         y=y_train_mapped
     )
-    print("  Pesos de classe calculados para o XGBoost.")
     
-    model_pipeline = Pipeline(steps=[
+    # 1. Criar o Pipeline (igual antes)
+    xgb_pipeline = Pipeline(steps=[
         ('preprocessor', preprocessor),
         ('classifier', XGBClassifier(
             objective='multi:softmax', 
             num_class=3,             
             random_state=42,
-            n_estimators=100,        
-            max_depth=5,             
-            learning_rate=0.1
+            eval_metric='mlogloss' # Métrica de avaliação interna
         ))
     ])
     
-    # --- CORREÇÃO: Passar os pesos para o .fit() ---
-    # O pipeline passa os pesos para o passo 'classifier'
-    model_pipeline.fit(X_train, y_train_mapped, classifier__sample_weight=sample_weights)
+    # 2. Definir a Grade de Parâmetros para testar
+    # (O prefixo 'classifier__' diz ao pipeline para passar
+    #  o parâmetro para o passo 'classifier')
+    param_grid = {
+        'classifier__n_estimators': [100, 200, 300], # Número de árvores
+        'classifier__max_depth': [3, 5, 7],      # Profundidade das árvores
+        'classifier__learning_rate': [0.1, 0.05]   # Taxa de aprendizado
+    }
     
-    print("✅ Modelo Avançado Ponderado treinado.")
-    return model_pipeline, target_map
+    # 3. Configurar o GridSearchCV
+    # Usamos 'f1_weighted' como 'scoring' pois estamos desbalanceados
+    grid_search = GridSearchCV(
+        estimator=xgb_pipeline,
+        param_grid=param_grid,
+        scoring='f1_weighted', # Métrica de otimização
+        cv=3,                  # 3-fold cross-validation
+        n_jobs=-1,             # Usar todos os processadores
+        verbose=1              # Mostrar progresso
+    )
+    
+    # 4. Criar o dicionário de fit_params
+    # (Para passar os sample_weights para o XGBoost DENTRO do gridsearch)
+    fit_params = {
+        'classifier__sample_weight': sample_weights
+    }
+    
+    # 5. Executar a Otimização
+    grid_search.fit(X_train, y_train_mapped, **fit_params)
+    
+    print("✅ Otimização (GridSearch) concluída.")
+    print(f"Melhores parâmetros encontrados: {grid_search.best_params_}")
+    
+    # Retorna o MELHOR modelo encontrado
+    return grid_search.best_estimator_, target_map
 
 
 # --- Bloco de Teste ---
@@ -183,24 +208,23 @@ if __name__ == "__main__":
         print("\nRelatório de Classificação (Baseline Ponderado):")
         print(classification_report(y_test, y_pred_baseline))
 
-        # 6. Treinar e Avaliar Modelo Avançado (Issue #10)
-        advanced_model, target_map = train_advanced_model(preprocessor, X_train, y_train)
+        # 6. Otimizar e Avaliar Modelo Avançado (Issue #11)
+        best_advanced_model, target_map = tune_advanced_model(preprocessor, X_train, y_train)
         
-        print("\n--- Avaliação do Modelo Avançado (XGBoost Ponderado) ---")
+        print("\n--- Avaliação do Modelo Avançado (XGBoost OTIMIZADO) ---")
         
-        # O XGBoost prevê números (0, 1, 2), precisamos mapear de volta para string
-        y_pred_advanced_mapped = advanced_model.predict(X_test)
+        y_pred_advanced_mapped = best_advanced_model.predict(X_test)
         
-        # Criar o mapa reverso (ex: {0: 'Empate', ...})
         target_map_reverse = {v: k for k, v in target_map.items()}
         y_pred_advanced = pd.Series(y_pred_advanced_mapped).map(target_map_reverse)
         
         accuracy_advanced = accuracy_score(y_test, y_pred_advanced)
-        print(f"\nAcurácia (Avançado Ponderado): {accuracy_advanced * 100:.2f} %")
-        print("\nRelatório de Classificação (Avançado Ponderado):")
+        print(f"\nAcurácia (Avançado Otimizado): {accuracy_advanced * 100:.2f} %")
+        print("\nRelatório de Classificação (Avançado Otimizado):")
         print(classification_report(y_test, y_pred_advanced))
         
         # 7. Comparação
         print("\n--- Comparação de Modelos Ponderados ---")
         print(f"Acurácia Baseline (Logistic): {accuracy_baseline * 100:.2f} %")
-        print(f"Acurácia Avançado (XGBoost):  {accuracy_advanced * 100:.2f} %")
+        print(f"Acurácia Avançado (XGBoost Otimizado):  {accuracy_advanced * 100:.2f} %")
+        print(f"Melhoria: {(accuracy_advanced - accuracy_baseline) * 100:.2f} pontos percentuais")
